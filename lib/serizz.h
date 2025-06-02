@@ -28,7 +28,7 @@
 
 typedef struct {
     bool initialized;
-    
+
     // Memory Management
     byte vhd[MEM_SIZE];                 // el VirtHD
     unsigned int data_offset;           // data storage section start
@@ -39,25 +39,37 @@ typedef struct {
     unsigned int object_counter_index;  // obj counter index
 } memory;
 
-static struct obj_header {
-    byte id[4];
-    byte offset[4];
-    byte size[4];
-} obj_default = { {0}, {0}, {0} };
+typedef union {
+    memory m;
+    char b[sizeof(memory)];
+} memory_transfer;
 
-static void init_obj(memory* mem, struct obj_header* dest, size_t size)
+typedef union {
+    byte b[4];
+    int i;
+} byte_group;
+
+// byte_group init_bg(int x) { byte_group b = {}; b.i = x; return b; }
+
+static struct obj_header {
+    byte_group id;
+    byte_group offset;
+    byte_group size;
+} obj_default = { {.i = 0}, {.i = 0}, {.i = 0} };
+
+static void init_obj(const memory* mem, struct obj_header* dest, size_t size)
 {
     DBG("OFFSET: \t");
-    const byte* offset = to_byte(mem->data_offset);
-    memcpy(&dest->offset, offset, 4 * sizeof(byte));
+    const byte_group offset = { .i = (int) mem->data_offset };
+    memcpy(&dest->offset, &offset, 4 * sizeof(byte));
 
     DBG("SIZE: \t\t");
-    const byte* _size = to_byte(size);
-    memcpy(&dest->size, _size, 4 * sizeof(byte));
+    const byte_group _size = { .i = (int) size };
+    memcpy(&dest->size, &_size, 4 * sizeof(byte));
 
     DBG("ID: \t\t");
-    const byte* objid = to_byte(mem->last_handle);
-    memcpy(&dest->id, objid, 4 * sizeof(byte));
+    const byte_group objid = { .i = (int) mem->last_handle };
+    memcpy(&dest->id, &objid, 4 * sizeof(byte));
 
     DBG("[%d]\n\tOFFSET:\t%d\n\tSIZE:\t%d\n", last_handle, data_offset, size);
     // just HOPE that this shit is valid :pray:
@@ -105,41 +117,77 @@ int push(memory* mem, const void* src, size_t srcsize) {
     return id;
 }
 
-void* get(memory* mem, int h)
-{
-    assert(mem->initialized, "query attempt on unitialized data");
-    if(mem->vhd[mem->object_counter_index] == 0) return NULL;
-    int obj_count = 0;
-
+int query_obj_count(memory* mem) {
+    int objc = 0;
     if(mem->object_counter_index != 0) {
         int x = mem->object_counter_index;
         while(x)
         {
-            obj_count += mem->vhd[x--];
+            objc += mem->vhd[x--];
         }
-    } else obj_count += mem->vhd[0];
+    } else objc += mem->vhd[0];
 
+    return objc;
+}
+
+void* get(memory* mem, int h)
+{
+    assert(mem->initialized, "query attempt on unitialized data");
+    if(mem->vhd[mem->object_counter_index] == 0) return NULL;
+
+    int obj_count = query_obj_count(mem);
     DBG("Queried obj count of %d\n", obj_count);
+
     int id = -1;
     int dptr = INFO_START;
-
     struct obj_header obj;
+
     while(id != h)
     {
         assert(id != obj_count, "invalid handle");
 
         memcpy(&obj, mem->vhd + dptr, sizeof(struct obj_header));
 
-        id = from_byte(obj.id);
+        id = obj.id.i;
         dptr += sizeof(struct obj_header);
     }
-    DBG("[%d]\n\tOFFSET:\t%d\n\tSIZE:\t%d\n", from_byte(obj.id), from_byte(obj.offset), from_byte(obj.size));
 
-    void* tmpret = malloc(from_byte(obj.size));
+    DBG("MEM[%d]\n\
+            \tOFFSET:\t%d\n\
+            \tSIZE:\t%d\n",
+        obj.id.i, obj.offset.i, obj.size.i);
+
+    void* tmpret = malloc(obj.size.i);
     assert(tmpret != NULL, "memory allocator fault");
 
-    memcpy(tmpret, mem->vhd + from_byte(obj.offset), from_byte(obj.size));
+    memcpy(tmpret, mem->vhd + obj.offset.i, obj.size.i);
     return tmpret;
+}
+
+void write(const memory* mem, const char* path)
+{
+    FILE* f = NULL;
+
+    f = fopen(path, "wb");
+    assert(f != NULL, "Invalid path");
+    memory_transfer mt = {.m = *mem};
+
+    fwrite(mt.b, sizeof(byte), sizeof(memory), f);
+    fclose(f);
+}
+
+void read(memory* mem, const char* path)
+{
+    FILE* f = NULL;
+
+    f = fopen(path, "rb");
+    assert(f != NULL, "Invalid path");
+
+    memory_transfer mt;
+
+    fread(mt.b, sizeof(byte), sizeof(memory), f);
+    *mem = mt.m;
+    fclose(f);
 }
 
 #endif // SERIZZ_H

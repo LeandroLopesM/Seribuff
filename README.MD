@@ -1,6 +1,7 @@
 # SeRizzler
 
-Serialization library, doesn't currently support disk etching (writing memory structure to disk), though it should by fairly trivial (Its just a matter of shipping the files with memory length and other metadata).
+(Sorta) single-header serialization library in pure C
+    |> utils.h can make your life easier, but that's up to you :3
 ## Usage
 ```c
 memory mem;
@@ -16,17 +17,25 @@ int main() {
     struct MyStruct another_var = get(mem, my_var_handle);
 }
 ```
-Alternatively, you can forego such things by doing:
+#### You can forego passing the memory as an argument with these alternatives:
+##### Defauly memory macro
+```c
+MEMORY(m) // automatically creates the memory variable, and infers prefixes
+m_push()
+m_get()
 ```
+##### Prefix inference:
+```c
 INFER_PREFIX(my_mem_var)
 my_mem_var_push()
 my_mem_var_get()
 ```
-OR, in case you want to select the prefix:
-```
+##### Argument inference
+```c
 INFER_ARG(main, my_mem_var)
 main_push()
 main_get()
 ```
+
 
 # Have fyn!

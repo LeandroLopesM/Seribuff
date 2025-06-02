@@ -41,6 +41,32 @@ int main() {
         
         free(ut);
     }
+    {
+        user u = (user){0, "Sinclaire Pindague", 0xffaaee};
+
+        int handle = mem_push(&u, sizeof(user));
+        printf("HANDLE: %d\n", handle);
+
+        user *ut = (user *)mem_get(handle);
+        assert(ut != NULL, "Failed to find user");
+
+        printf("NAME: %s\n", ut->name);
+        
+        free(ut);
+    }
+    {
+        user u = (user){0, "PindamonhanGabriel", 0x000000};
+
+        int handle = mem_push(&u, sizeof(user));
+        printf("HANDLE: %d\n", handle);
+
+        user *ut = (user *)mem_get(handle);
+        assert(ut != NULL, "Failed to find user");
+
+        printf("NAME: %s\n", ut->name);
+        
+        free(ut);
+    }
 
     return 0;
 }

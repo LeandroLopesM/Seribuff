@@ -4,7 +4,7 @@
 #include "../lib/util.h"
 #include "../lib/serizz.h"
 
-memory mem;
+MEMORY(mem)
 
 typedef struct {
     int age;
@@ -16,10 +16,10 @@ typedef struct {
 int main() {
     user u = (user){0, "Liam Nielson", 01010101};
 
-    int handle = push(&mem, &u, sizeof(user));
+    int handle = mem_push(&u, sizeof(user));
     printf("HANDLE: %d\n", handle);
 
-    user *ut = (user *)get(&mem, handle);
+    user *ut = (user *)mem_get(handle);
     assert(ut != NULL, "Failed to find user");
 
     printf("NAME: %s\n", ut->name);

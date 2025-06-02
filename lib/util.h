@@ -13,23 +13,34 @@
     #define false 0
 #endif
 
-#define INFER_PREFIX(x)                         \
-    int x##_push(const void* src, size_t srcsize) {   \
-        return push(&x, src, srcsize);          \
-    }                                           \
-                                                \
-    void* x##_get(int h) {                      \
-        return get(&x, h);                      \
-    }                                           \
+#define INFER_PREFIX(x)                                 \
+    int x##_push(const void* src, size_t srcsize) {     \
+        return push(&x, src, srcsize);                  \
+    }                                                   \
+                                                        \
+    void* x##_get(int h) {                              \
+        return get(&x, h);                              \
+    }                                                   \
+                                                        \
+    void* x##_write(char* path) {                       \
+        write(&x, path);                                \
+    }                                                   \
 
-#define INFER_ARG(x, y)                         \
-    int x##_push(const void* src, size_t srcsize) {   \
-        return push(&y, src, srcsize);          \
-    }                                           \
-                                                \
-    void* x##_get(int h) {                      \
-        return get(&y, h);                      \
-    }                                           \
+#define INFER_ARG(x, y)                                 \
+    int x##_push(const void* src, size_t srcsize) {     \
+        return push(&y, src, srcsize);                  \
+    }                                                   \
+                                                        \
+    void* x##_get(int h) {                              \
+        return get(&y, h);                              \
+    }                                                   \
+    void* x##_write(char* path) {                       \
+        return write(&y, path);                         \
+    }                                                   \
+
+#define MEMORY(x)       \
+    memory x;           \
+    INFER_PREFIX(x)     \
 
 #ifdef DEBUG
 #   define DBG(fmt, ...) printf(fmt, __VA_ARGS__)
