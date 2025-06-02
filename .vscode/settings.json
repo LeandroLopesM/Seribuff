@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.iset": "powershell",
+        "*.hlisl": "swift",
+        "*.ser": "yaml",
+        "*.lox": "python",
+        "stdbool.h": "c",
+        "ctype.h": "c"
+    }
+}
