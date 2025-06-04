@@ -22,8 +22,14 @@
         return get(&x, h);                              \
     }                                                   \
                                                         \
-    void* x##_write(char* path) {                       \
+    void x##_write(char* path) {                        \
         write(&x, path);                                \
+    }                                                   \
+    void x##_clear() {                                  \
+        clear(&x);                                      \
+    }                                                   \
+    int x##_size() {                                    \
+        return size(&x);                                \
     }                                                   \
 
 #define INFER_ARG(x, y)                                 \
@@ -34,8 +40,14 @@
     void* x##_get(int h) {                              \
         return get(&y, h);                              \
     }                                                   \
-    void* x##_write(char* path) {                       \
+    void x##_write(char* path) {                        \
         return write(&y, path);                         \
+    }                                                   \
+    void x##_clear() {                                  \
+        clear(&y);                                      \
+    }                                                   \
+    int x##_size() {                                    \
+        return size(&y);                                \
     }                                                   \
 
 #define MEMORY(x)       \
@@ -49,10 +61,12 @@
 #endif
 
 #define assert(x, msg) \
-    do { if(!(x)) { fprintf(stderr, "%s:%d assertion failed: '%s'\nPanic message: %s", __FILE__, __LINE__, #x, msg); exit(1); } } while(0)
+    do { if(!(x)) { fprintf(stderr, "%s:%d assertion failed: '%s'\nPanic message:\t%s\n", __FILE__, __LINE__, #x, msg); exit(1); } } while(0)
 
 typedef unsigned char byte;
 
+// shamelessly ripped from a stackexchange thread i lost the link of
+// *slightly* tweaked
 void hexdump(const void *data, size_t size) {
     const byte *b = (byte *)data;
     size_t i, j;
@@ -87,82 +101,6 @@ void hexdump(const void *data, size_t size) {
 
         printf("\n");
     }
-}
-
-byte* to_byte(int f)
-{
-    assert(f >= 0, "cannot coerce negative int");
-
-    static byte fb[4] = {0};
-    memset(fb, 0, sizeof(fb));
-
-    if(f >= (1 << (8 * 3)) - 1) {
-        fb[0] = f & ((1 << 8) - 1);
-        f = f >> 8;
-        fb[1] = f & ((1 << 8) - 1);
-        f = f >> 8;
-        fb[2] = f & ((1 << 8) - 1);
-        fb[3] = f >> 8;
-
-        DBG("%d/%d/%d/%d larger than 2 bytes\n", fb[0], fb[1], fb[2], fb[3]);
-    }
-    else if(f >= (1 << (8 * 2)) - 1) {
-        fb[0] = f & ((1 << 8) - 1);
-        f = f >> 8;
-        fb[1] = f & ((1 << 8) - 1);
-        fb[2] = f >> 8;
-
-        DBG("%d/%d/%d larger than 2 bytes\n", fb[0], fb[1], fb[2]);
-    }
-    else if(f > (1 << 8) - 1) {
-        fb[0] = f & ((1 << 8) - 1);
-        fb[1] = f >> 8;
-        DBG("%d/%d larger than 1 byte\n", (byte)fb[0], fb[1], fb[2]);
-    }
-    else {
-        fb[0] = f;
-        DBG("%d within constraints", f);
-    }
-
-    return fb;
-}
-
-int from_byte(const byte* f)
-{
-    // static int fb[4] = {0};
-    // memset(fb, 0, sizeof(fb));
-
-    int e = 0;
-
-    if(f[3]) {
-        e = f[3];
-        e = e << 8;
-        e |= f[2];
-        e = e << 8;
-        e |= f[1];
-        e = e << 8;
-        e |= f[0];
-
-        DBG("%d larger than 2 bytes\n", e);
-    }
-    else if(f[2]) {
-        e = f[2];
-        e = e << 8;
-        e |= f[1];
-        e = e << 8;
-        e |= f[0];
-
-        DBG("%d larger than 2 bytes\n", e);
-    }
-    else if(f[1]) {
-        e = f[1];
-        e = e << 8;
-        e |= f[0];
-        DBG("%d larger than 1 byte\n", e);
-    }
-    else e = f[0];
-
-    return e;
 }
 
 #endif // UTIL_H

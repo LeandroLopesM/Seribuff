@@ -14,6 +14,7 @@
 #define SERIZZ_H
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <ctype.h>
 #include <stdio.h>
 
@@ -24,19 +25,33 @@
 #   define MEM_SIZE 1024
 #endif
 
-#define INFO_START 4 // 4 Bytes reserved for object_counter_index
+#if MEM_SIZE < 256
+#   define MEMPOS uint8_t
+#elif MEM_SIZE < 65536
+#   define MEMPOS uint16_t
+#elif MEM_SIZE < 4294967296
+#   define MEMPOS uint32_t
+#elif MEM_SIZE < 18446744073709551616
+#   define MEMPOS uint64_t
+#endif
+
+#ifndef INFO_START
+#   define INFO_START 4 // 4 Bytes reserved for object_counter_index
+#endif // INFO_START
+
+typedef MEMPOS mempos;
 
 typedef struct {
     bool initialized;
 
     // Memory Management
-    byte vhd[MEM_SIZE];                 // el VirtHD
-    unsigned int data_offset;           // data storage section start
+    byte vhd[MEM_SIZE];           // el VirtHD
+    mempos data_offset;           // data storage section start
 
     // Object Management
-    unsigned int obj_info_section;      // obj info section start
-    unsigned int last_handle;           // latest obj handle
-    unsigned int object_counter_index;  // obj counter index
+    mempos obj_info_section;      // obj info section start
+    mempos last_handle;           // latest obj handle
+    mempos object_counter_index;  // obj counter index
 } memory;
 
 typedef union {
@@ -47,28 +62,33 @@ typedef union {
 typedef union {
     byte b[4];
     int i;
-} byte_group;
+} int_byte;
 
-// byte_group init_bg(int x) { byte_group b = {}; b.i = x; return b; }
+typedef union {
+    byte b[sizeof(mempos)];
+    mempos i;
+} mempos_byte;
+
+// int_byte init_bg(int x) { int_byte b = {}; b.i = x; return b; }
 
 static struct obj_header {
-    byte_group id;
-    byte_group offset;
-    byte_group size;
+    int_byte id;
+    mempos_byte offset;
+    int_byte size;
 } obj_default = { {.i = 0}, {.i = 0}, {.i = 0} };
 
 static void init_obj(const memory* mem, struct obj_header* dest, size_t size)
 {
     DBG("OFFSET: \t");
-    const byte_group offset = { .i = (int) mem->data_offset };
-    memcpy(&dest->offset, &offset, 4 * sizeof(byte));
+    const mempos_byte offset = { .i = mem->data_offset };
+    memcpy(&dest->offset, &offset, sizeof(mempos) * sizeof(byte));
 
     DBG("SIZE: \t\t");
-    const byte_group _size = { .i = (int) size };
+    const int_byte _size = { .i = (int) size };
     memcpy(&dest->size, &_size, 4 * sizeof(byte));
 
     DBG("ID: \t\t");
-    const byte_group objid = { .i = (int) mem->last_handle };
+    const int_byte objid = { .i = (int) mem->last_handle };
     memcpy(&dest->id, &objid, 4 * sizeof(byte));
 
     DBG("[%d]\n\tOFFSET:\t%d\n\tSIZE:\t%d\n", last_handle, data_offset, size);
@@ -105,6 +125,8 @@ static void init(memory* mem)
 }
 
 int push(memory* mem, const void* src, size_t srcsize) {
+    assert(mem != NULL, "null memory param");
+
     if(!mem->initialized) init(mem);
     if(mem->data_offset + srcsize == MEM_SIZE) return -1;
     int id = -1;
@@ -117,8 +139,9 @@ int push(memory* mem, const void* src, size_t srcsize) {
     return id;
 }
 
-int query_obj_count(memory* mem) {
+static int query_obj_count(memory* mem) {
     int objc = 0;
+    
     if(mem->object_counter_index != 0) {
         int x = mem->object_counter_index;
         while(x)
@@ -130,8 +153,13 @@ int query_obj_count(memory* mem) {
     return objc;
 }
 
+int size(memory* mem) {
+    return query_obj_count(mem);
+}
+
 void* get(memory* mem, int h)
 {
+    assert(mem != NULL, "null memory param");
     assert(mem->initialized, "query attempt on unitialized data");
     if(mem->vhd[mem->object_counter_index] == 0) return NULL;
 
@@ -166,6 +194,7 @@ void* get(memory* mem, int h)
 
 void write(const memory* mem, const char* path)
 {
+    assert(mem != NULL, "null memory param");
     FILE* f = NULL;
 
     f = fopen(path, "wb");
@@ -178,6 +207,7 @@ void write(const memory* mem, const char* path)
 
 void read(memory* mem, const char* path)
 {
+    assert(mem != NULL, "null memory param");
     FILE* f = NULL;
 
     f = fopen(path, "rb");
@@ -188,6 +218,14 @@ void read(memory* mem, const char* path)
     fread(mt.b, sizeof(byte), sizeof(memory), f);
     *mem = mt.m;
     fclose(f);
+}
+
+void clear(memory* mem)
+{
+    assert(mem != NULL, "null memory param");
+
+    mem->initialized = false;
+    init(mem);
 }
 
 #endif // SERIZZ_H
