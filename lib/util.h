@@ -55,9 +55,11 @@
     INFER_PREFIX(x)     \
 
 #ifdef DEBUG
-#   define DBG(fmt, ...) printf(fmt, __VA_ARGS__)
+#   define DBG(fmt) printf(fmt)
+#   define DBGF(fmt, ...) printf(fmt, __VA_ARGS__)
 #else
 #   define DBG(fmt, ...)
+#   define DBGF(fmt, ...)
 #endif
 
 #define assert(x, msg) \
@@ -102,5 +104,13 @@ void hexdump(const void *data, size_t size) {
         printf("\n");
     }
 }
+
+#define CUSTOM_STACK(size, struct_body)\
+struct stack struct_body;\
+struct stack s[size];\
+int sp = 0;
+
+#define STACK_PUSH(a, ...) \
+    s[sp++] = (struct stack){__VA_ARGS__};
 
 #endif // UTIL_H

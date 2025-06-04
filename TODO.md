@@ -1,2 +1,4 @@
  - Replace asserts with checks
     - define a macro that returns if ASSERT_FATAL is defined or make a whole separate macro for that
+ - continuous free_space  detection and subsequent welding
+    - fork into a defrag() function? // useles???!
