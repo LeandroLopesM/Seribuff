@@ -22,46 +22,47 @@
 #include <string.h>
 #include "util.h"
 
-#ifndef MEM_SIZE
-#   define MEM_SIZE 1024
+#ifndef VHD_SIZE
+#   define VHD_SIZE 1024
 #endif
 
-#if MEM_SIZE < 256
+#if VHD_SIZE < 256
 #   define MEMPOS uint8_t
-#elif MEM_SIZE < 65536
+#elif VHD_SIZE < 65536
 #   define MEMPOS uint16_t
-#elif MEM_SIZE < 4294967296
+#elif VHD_SIZE < 4294967296
 #   define MEMPOS uint32_t
-#elif MEM_SIZE < 18446744073709551616
+#elif VHD_SIZE < 18446744073709551616
 #   define MEMPOS uint64_t
 #endif
 
-#ifndef INFO_START
-#   define INFO_START 4 // 4 Bytes reserved for object_counter_index
-#endif // INFO_START
+#ifndef OBJ_SECTION_START
+#   define OBJ_SECTION_START 4 // 4 Bytes reserved for object_counter_index
+#endif // OBJ_SECTION_START
 
 #ifndef MAX_FRAGMENTS
 #   define MAX_FRAGMENTS 4
 #endif
 
-typedef MEMPOS mempos;
+typedef MEMPOS mempos_t;
 
 typedef struct {
     size_t size;
-    mempos start;
+    mempos_t start;
 } free_space;
 
 typedef struct {
     bool initialized;
 
     // Memory Management
-    byte vhd[MEM_SIZE];           // el VirtHD
-    mempos data_offset;           // data storage section start
+    byte vhd[VHD_SIZE];             // el VirtHD
+    
+    mempos_t data_offset;           // data storage section start
 
     // Object Management
-    mempos obj_info_section;      // obj info section start
-    mempos last_handle;           // latest obj handle
-    mempos object_counter_index;  // obj counter index
+    mempos_t obj_info_section;      // obj header storage start
+    mempos_t last_handle;           // latest obj handle
+    mempos_t object_counter_index;  // obj counter index
     free_space spaces[MAX_FRAGMENTS];
     int fs_top;
 } memory;
@@ -69,7 +70,7 @@ typedef struct {
 typedef union {
     memory m;
     char b[sizeof(memory)];
-} memory_transfer;
+} memory_byte;
 
 typedef union {
     // byte b[sizeof(int)];
@@ -77,43 +78,67 @@ typedef union {
 } int_byte;
 
 typedef union {
-    // byte b[sizeof(mempos)];
-    mempos i;
+    // byte b[sizeof(mempos_t)];
+    mempos_t i;
 } mempos_byte;
 
-// int_byte init_bg(int x) { int_byte b = {}; b.i = x; return b; }
 
 static struct obj_header {
-    int_byte id;
-    mempos_byte offset;
-    int_byte size;
-} obj_default = { {.i = 0}, {.i = 0}, {.i = 0} };
+    int_byte    id;     // Unique ID for the object
+    mempos_byte offset; // Object offset inside the VHD
+    int_byte    size;   // Object size inside the VHD
+    bool        valid; // Here to prevent access to headers invalidaded due to deletion
+} obj_default = { {.i = 0}, {.i = 0}, {.i = 0}, false };
 
 #define obj_header struct obj_header
 
-static void init_obj(const memory* mem, obj_header* dest, size_t size)
-{
-    DBG("OFFSET: \t");
-    const mempos_byte offset = { .i = mem->data_offset };
-    memcpy(&dest->offset, &offset, sizeof(mempos) * sizeof(byte));
+/****************************** FUNCTIONS *******************************/
 
-    DBG("SIZE: \t\t");
+int     push(memory* mem, const void* src, size_t srcsize);         // pushes an elemento to mem.vhd
+int     size(memory* mem);                                          // Returns the count of items in mem.vhd
+void*   get(memory* mem, int h);                                    // Copies the element with handle h to heap, returns a ptr to it
+void    read(memory* mem, const char* path);                        // Reads path to mem
+void    write(const memory* mem, const char* path);                 // writes mem to disk, to be used in conjunction with read
+void    clear(memory* mem);                                         // Fully clears mem.vhd
+void*   destroy(memory* mem, int handle);                           // Deletes header and element in mem.vhd with handle
+void    fs_stat(memory* mem);                                       // Displays the current status of the free spaces in mem.vhd (fragments)
+void    obj_stat(memory* mem);                                      // Displays the current status of object headers 
+void    find_obj(memory* mem, obj_header* dest, int handle);        // Finds obj with handle in mem, copies it to dest
+
+static int      query_header_offset(const memory* mem, const obj_header* o);        // Finds the object offset of o in mem
+static int      query_obj_count(memory* mem);                                       // Fetches the obj count from first 4 bytes of mem.vhd
+static int      push_header(memory* mem, size_t size);                              // Creates a new header and commits it to the obj section of mem.vhd
+static void     init_obj_header(const memory* mem, obj_header* dest, size_t size);  // Initiates the obj_header structure
+static void     destroy_header(memory* mem, const obj_header* obj);                 // Deletes the header, popping all the ones in front back by a slot
+static void     init(memory* mem);                                                  // Initiates the memory structure
+static void     pop_at(free_space* arr, int change, int fstop);                     // removes the element
+static void     update_space(memory* mem, mempos_t change, size_t changesize);      // Deletes the changed free space
+static mempos_t lowest_available_offset(memory* mem, size_t required_size);         // Finds the lowest available offset in the list of free_spaces
+
+/****************************** IMPLEMENTATIONS *******************************/
+
+static void init_obj_header(const memory* mem, obj_header* dest, size_t size)
+{
+    const mempos_byte offset = { .i = mem->data_offset };
+    memcpy(&dest->offset, &offset, sizeof(mempos_t) * sizeof(byte));
+
     const int_byte _size = { .i = (int) size };
     memcpy(&dest->size, &_size, 4 * sizeof(byte));
 
-    DBG("ID: \t\t");
     const int_byte objid = { .i = (int) mem->last_handle };
     memcpy(&dest->id, &objid, 4 * sizeof(byte));
 
-    DBGF("[%d]\n\tOFFSET:\t%d\n\tSIZE:\t%lu\n", mem->last_handle, offset.i, (unsigned long)size);
+    dest->valid = true;
+    DBGF("\n\t[%d]\n\t\tOFFSET:\t\t%d\n\t\tSIZE:\t\t%lu\n", mem->last_handle, offset.i, (unsigned long)size);
     // just HOPE that this shit is valid :pray:
 }
 
-static int push_header(memory* mem, size_t size) {
-    assert(mem->obj_info_section + sizeof(obj_header) != MEM_SIZE / 4, "info section overflow");
+static int push_header(memory* mem, size_t size)
+{
+    assert(mem->obj_info_section + sizeof(obj_header) != VHD_SIZE / 4, "info section overflow");
     obj_header obj = obj_default;
 
-    init_obj(mem, &obj, size);
+    init_obj_header(mem, &obj, size);
 
     memcpy(mem->vhd + mem->obj_info_section, &obj, sizeof(obj));
     mem->obj_info_section += sizeof(obj_header);
@@ -131,25 +156,26 @@ static void init(memory* mem)
 {
     if(mem->initialized) return;
     
-    mem->data_offset            = MEM_SIZE / 4;
+    mem->data_offset            = VHD_SIZE / 4;
     
-    mem->obj_info_section       = INFO_START;
+    mem->obj_info_section       = OBJ_SECTION_START;
     mem->object_counter_index   = 0;
     mem->last_handle            = 0;
 
     mem->fs_top                 = 0;
     
     memset(mem->spaces, 0, MAX_FRAGMENTS * sizeof(free_space));
-    memset(mem->vhd, 0, MEM_SIZE);
+    memset(mem->vhd, 0, VHD_SIZE);
 
                                 //  *might* introduce a 1 byte gap between obj and data sections
-    mem->spaces[mem->fs_top].size = (size_t)floor(MEM_SIZE * (3./4.)),
-    mem->spaces[mem->fs_top].start = MEM_SIZE / 4;
+    mem->spaces[mem->fs_top].size = (size_t)floor(VHD_SIZE * (3./4.)),
+    mem->spaces[mem->fs_top].start = VHD_SIZE / 4;
     
     mem->initialized            = true;
 }
 
-void pop_at(free_space* arr, int change, int fstop) {
+static void pop_at(free_space* arr, int change, int fstop)
+{
     for(int i = change; i < fstop; ++i)
     {
         arr[i] = arr[i + 1];
@@ -157,7 +183,7 @@ void pop_at(free_space* arr, int change, int fstop) {
 
 }
 
-void update_space(memory* mem, mempos change, size_t changesize)
+static void update_space(memory* mem, mempos_t change, size_t changesize)
 {
 // don't trust this code right now, but dont wanna forget to implement it as well
 #ifdef DISK_DEFRAG_IMPL
@@ -172,9 +198,9 @@ void update_space(memory* mem, mempos change, size_t changesize)
         {
             if( ptr + 1 < mem->fs_top ) {
                 // regular middle-member check
-                mempos end_before   = mem->spaces[ptr - 1].size + mem->spaces[ptr - 1].start;
-                mempos end_after    = mem->spaces[ptr + 1].size + mem->spaces[ptr + 1].start;
-                mempos end_current  = mem->spaces[ptr].size + mem->spaces[ptr].start;
+                mempos_t end_before   = mem->spaces[ptr - 1].size + mem->spaces[ptr - 1].start;
+                mempos_t end_after    = mem->spaces[ptr + 1].size + mem->spaces[ptr + 1].start;
+                mempos_t end_current  = mem->spaces[ptr].size + mem->spaces[ptr].start;
                 
                 free_space before   = mem->spaces[ptr - 1];
                 free_space after    = mem->spaces[ptr + 1];
@@ -234,14 +260,14 @@ void update_space(memory* mem, mempos change, size_t changesize)
     mem->spaces[change].start += changesize;
 }
 
-static mempos lowest_available_offset(memory* mem, size_t required_size)
+static mempos_t lowest_available_offset(memory* mem, size_t required_size)
 {
     int ptr = mem->fs_top;
-    mempos ret = -1;
+    mempos_t ret = -1;
 
     while(ptr >= 0)
     {
-        DBGF("Space[%d]\n\tSIZE:\t%llu\n\tSTART:\t%d\n", ptr, mem->spaces[ptr].size, mem->spaces[ptr].start);
+        DBGF("\FPL[%d]\n\t\tSIZE:\t%llu\n\t\tSTART:\t%d\n", ptr, mem->spaces[ptr].size, mem->spaces[ptr].start);
         if(mem->spaces[ptr].size >= required_size) {
             ret = mem->spaces[ptr].start;
             goto success;
@@ -259,11 +285,12 @@ fail:
     // return -1;
 }
 
-int push(memory* mem, const void* src, size_t srcsize) {
+int push(memory* mem, const void* src, size_t srcsize)
+{
     assert(mem != NULL, "null memory param");
 
     if(!mem->initialized) init(mem);
-    if(mem->data_offset + srcsize == MEM_SIZE) return -1;
+    if(mem->data_offset + srcsize == VHD_SIZE) return -1;
     int id = -1;
 
     if((id = push_header(mem, srcsize)) == -1) return -1;
@@ -273,7 +300,8 @@ int push(memory* mem, const void* src, size_t srcsize) {
     return id;
 }
 
-static int query_obj_count(memory* mem) {
+static int query_obj_count(memory* mem)
+{
     int objc = 0;
     
     if(mem->object_counter_index != 0) {
@@ -287,7 +315,8 @@ static int query_obj_count(memory* mem) {
     return objc;
 }
 
-int size(memory* mem) {
+int size(memory* mem)
+{
     return query_obj_count(mem);
 }
 
@@ -297,7 +326,7 @@ void find_obj(memory* mem, obj_header* dest, int handle)
     DBGF("Queried obj count of %d\n", obj_count);
 
     int id = -1;
-    int dptr = INFO_START;    
+    int dptr = OBJ_SECTION_START;    
 
     while(id != handle)
     {
@@ -308,6 +337,8 @@ void find_obj(memory* mem, obj_header* dest, int handle)
         id = dest->id.i;
         dptr += sizeof(obj_header);
     }
+
+    assert(!dest->valid, "Attempt to fetch a destroyed object");
 }
 
 void* get(memory* mem, int h)
@@ -320,10 +351,12 @@ void* get(memory* mem, int h)
 
     find_obj(mem, &obj, h);
 
-    DBGF("MEM[%d]\n\
-            \tOFFSET:\t%d\n\
-            \tSIZE:\t%d\n",
-        obj.id.i, obj.offset.i, obj.size.i);
+DBGF("\
+MEM[%d]\n\
+    \tOFFSET:\t%d\n\
+    \tEXISTS:\t%d\n\
+    \tSIZE:\t%d\n",
+        obj.id.i, obj.offset.i, obj.valid, obj.size.i);
 
     void* tmpret = malloc(obj.size.i);
     assert(tmpret != NULL, "memory allocator fault");
@@ -339,7 +372,7 @@ void write(const memory* mem, const char* path)
 
     f = fopen(path, "wb");
     assert(f != NULL, "Invalid path");
-    memory_transfer mt = {.m = *mem};
+    memory_byte mt = {.m = *mem};
 
     fwrite(mt.b, sizeof(byte), sizeof(memory), f);
     fclose(f);
@@ -353,7 +386,7 @@ void read(memory* mem, const char* path)
     f = fopen(path, "rb");
     assert(f != NULL, "Invalid path");
 
-    memory_transfer mt;
+    memory_byte mt;
 
     fread(mt.b, sizeof(byte), sizeof(memory), f);
     *mem = mt.m;
@@ -392,21 +425,23 @@ void obj_stat(memory* mem)
 
     DBGF("ObjCount: %d\n", objc);
     
-    // for(int i = INFO_START; i <= mem->obj_info_section; i += sizeof(obj_header))
-    for(mempos i = INFO_START, count = 0; i < mem->obj_info_section || count < objc; i += sizeof(obj_header), count++)
+    // for(int i = OBJ_SECTION_START; i <= mem->obj_info_section; i += sizeof(obj_header))
+    for(mempos_t i = OBJ_SECTION_START, count = 0; i < mem->obj_info_section || count < objc; i += sizeof(obj_header), count++)
     {
         obj_header o;
         memcpy(&o, mem->vhd + i, sizeof(obj_header));
+        if(!o.valid) continue;
 
-        DBGF("OBJ[%lld]:\n\tId: %2d\tSize: %2lu\tOffset: %2d\n", (i - INFO_START) / sizeof(obj_header), o.id.i, (unsigned long)o.size.i, o.offset.i);
+        DBGF("OBJ[%lld]:\n\tId: %2d\tSize: %2lu\tOffset: %2d\n", (i - OBJ_SECTION_START) / sizeof(obj_header), o.id.i, (unsigned long)o.size.i, o.offset.i);
     }
 }
 
-int query_header_offset(const memory* mem, const obj_header* o)
+static int query_header_offset(const memory* mem, const obj_header* o)
 {
     const obj_header* copy = NULL;
+    assert(o->valid, "Attempt to query offset of deleted header");
 
-    for(int i = INFO_START; i <= mem->obj_info_section; i += sizeof(obj_header))
+    for(int i = OBJ_SECTION_START; i <= mem->obj_info_section; i += sizeof(obj_header))
     {
         copy = (obj_header*)(mem->vhd + i);
         if(copy->id.i == o->id.i) return i;
@@ -415,15 +450,16 @@ int query_header_offset(const memory* mem, const obj_header* o)
     return -1;
 }
 
-void destroy_header(memory* mem, const obj_header* obj) {
+static void destroy_header(memory* mem, const obj_header* obj) {
     int offset = query_header_offset(mem, obj);
+    assert(obj->valid, "Header was destroyed before the function could reach it!");
     assert(offset > 0, "Something went really bad");
 
     int copysz = sizeof(obj_header);
 
     for(int i = offset, counter = 0; counter <= query_obj_count(mem); i += copysz, ++counter)
     {
-        // if(i + copysz == mem->obj_info_section) break;
+        DBGF("Shifting struct at %d to %d\n", i + copysz, i);
         memcpy(mem->vhd + i, mem->vhd + i + copysz, copysz);
     }
 
@@ -432,6 +468,9 @@ void destroy_header(memory* mem, const obj_header* obj) {
     mem->data_offset -= sizeof(obj_header);
 }
 
+//! BEWARE! Destroying objects does not automatically defragment the VHD
+//! This will eventually be a feature, for now just use it as a VWORM
+//!                 (Virtual Write-Once-Read-Many)
 void* destroy(memory* mem, int handle)
 {
     obj_header obj;
@@ -453,8 +492,6 @@ void* destroy(memory* mem, int handle)
     destroy_header(mem, &obj);
     // try_weld(mem);
     
-    //! Still need to impl deletion of object headers!!
-    //! For now cleanup only happens in data-space
 
     return ret;
 }

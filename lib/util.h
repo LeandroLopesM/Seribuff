@@ -54,13 +54,26 @@
     memory x;           \
     INFER_PREFIX(x)     \
 
+// #define DEBUG
 #ifdef DEBUG
-#   define DBG(fmt) printf(fmt)
-#   define DBGF(fmt, ...) printf(fmt, __VA_ARGS__)
+#   define DBG(fmt)                                         \
+        do{                                                 \
+            char s[strlen(fmt) + strlen(__func__) + 4];\
+            sprintf(s, "%s: %s\n", __func__, fmt);            \
+            printf(s);                                      \
+        } while(0)
+#   define DBGF(fmt, ...)                                   \
+        do{                                                 \
+            char s[strlen(fmt) + strlen(__func__) + 4];\
+            sprintf(s, "%s: %s\n", __func__, fmt);            \
+            printf(s, __VA_ARGS__);                         \
+        } while(0)
 #else
 #   define DBG(fmt, ...)
 #   define DBGF(fmt, ...)
 #endif
+
+#define WELD(...) ___VA_ARGS__
 
 #define assert(x, msg) \
     do { if(!(x)) { fprintf(stderr, "%s:%d assertion failed: '%s'\nPanic message:\t%s\n", __FILE__, __LINE__, #x, msg); exit(1); } } while(0)
