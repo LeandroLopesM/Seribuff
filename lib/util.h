@@ -31,6 +31,9 @@
     int x##_size() {                                    \
         return size(&x);                                \
     }                                                   \
+    int x##_clear() {					\
+        return clear(&x);				\
+    }							\
 
 #define INFER_ARG(x, y)                                 \
     int x##_push(const void* src, size_t srcsize) {     \
