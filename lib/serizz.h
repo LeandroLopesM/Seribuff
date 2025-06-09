@@ -135,7 +135,7 @@ static void init_obj_header(const memory* mem, obj_header* dest, size_t size)
 
 static int push_header(memory* mem, size_t size)
 {
-    assert(mem->obj_info_section + sizeof(obj_header) != VHD_SIZE / 4, "info section overflow");
+    ASSERT(mem->obj_info_section + sizeof(obj_header) != VHD_SIZE / 4, "info section overflow");
     obj_header obj = obj_default;
 
     init_obj_header(mem, &obj, size);
@@ -145,7 +145,7 @@ static int push_header(memory* mem, size_t size)
 
     if(mem->vhd[mem->object_counter_index] == (1<<8) - 1) mem->object_counter_index++;
     // Memory overlap :!
-    assert(mem->object_counter_index != 4, "object counter overflow");
+    ASSERT(mem->object_counter_index != 4, "object counter overflow");
 
     mem->vhd[mem->object_counter_index]++;
 
@@ -249,7 +249,7 @@ static void update_space(memory* mem, mempos_t change, size_t changesize)
     //         mem[mem->fs_top++] = {.size = curr_section.size - }
     //     }
     // }
-    assert(change <= mem->fs_top, "Free space cache overflow inside the library");
+    ASSERT(change <= mem->fs_top, "Free space cache overflow inside the library");
 
     // for now, just walk the section forward.
     if(mem->spaces[change].size - changesize == 0) {
@@ -281,16 +281,16 @@ success:
     return ret;
 fail:
     // If this fires somehow none were found (push() should check if the object fits)
-    assert(0, "Memory overflow check inside the header failed somewhere");
+    ASSERT(0, "Memory overflow check inside the header failed somewhere");
     // return -1;
 }
 
 int push(memory* mem, const void* src, size_t srcsize)
 {
-    assert(mem != NULL, "null memory param");
-
+    SOFT_ASSERT(mem != NULL, "null memory param", return -1);
     if(!mem->initialized) init(mem);
-    if(mem->data_offset + srcsize == VHD_SIZE) return -1;
+    
+    SOFT_ASSERT(mem->data_offset + srcsize == VHD_SIZE, "VHD Full" , return -1;);
     int id = -1;
 
     if((id = push_header(mem, srcsize)) == -1) return -1;
@@ -330,7 +330,7 @@ void find_obj(memory* mem, obj_header* dest, int handle)
 
     while(id != handle)
     {
-        assert(id != obj_count, "invalid handle");
+        ASSERT(id != obj_count, "invalid handle");
 
         memcpy(dest, mem->vhd + dptr, sizeof(obj_header));
 
@@ -338,13 +338,13 @@ void find_obj(memory* mem, obj_header* dest, int handle)
         dptr += sizeof(obj_header);
     }
 
-    assert(!dest->valid, "Attempt to fetch a destroyed object");
+    ASSERT(!dest->valid, "Attempt to fetch a destroyed object");
 }
 
 void* get(memory* mem, int h)
 {
-    assert(mem != NULL, "null memory param");
-    assert(mem->initialized, "query attempt on unitialized data");
+    ASSERT(mem != NULL, "null memory param");
+    ASSERT(mem->initialized, "query attempt on unitialized data");
     if(mem->vhd[mem->object_counter_index] == 0) return NULL;
 
     obj_header obj;
@@ -359,7 +359,7 @@ MEM[%d]\n\
         obj.id.i, obj.offset.i, obj.valid, obj.size.i);
 
     void* tmpret = malloc(obj.size.i);
-    assert(tmpret != NULL, "memory allocator fault");
+    ASSERT(tmpret != NULL, "memory allocator fault");
 
     memcpy(tmpret, mem->vhd + obj.offset.i, obj.size.i);
     return tmpret;
@@ -367,11 +367,11 @@ MEM[%d]\n\
 
 void write(const memory* mem, const char* path)
 {
-    assert(mem != NULL, "null memory param");
+    ASSERT(mem != NULL, "null memory param");
     FILE* f = NULL;
 
     f = fopen(path, "wb");
-    assert(f != NULL, "Invalid path");
+    ASSERT(f != NULL, "Invalid path");
     memory_byte mt = {.m = *mem};
 
     fwrite(mt.b, sizeof(byte), sizeof(memory), f);
@@ -380,11 +380,11 @@ void write(const memory* mem, const char* path)
 
 void read(memory* mem, const char* path)
 {
-    assert(mem != NULL, "null memory param");
+    ASSERT(mem != NULL, "null memory param");
     FILE* f = NULL;
 
     f = fopen(path, "rb");
-    assert(f != NULL, "Invalid path");
+    ASSERT(f != NULL, "Invalid path");
 
     memory_byte mt;
 
@@ -395,7 +395,7 @@ void read(memory* mem, const char* path)
 
 void clear(memory* mem)
 {
-    assert(mem != NULL, "null memory param");
+    ASSERT(mem != NULL, "null memory param");
 
     mem->initialized = false;
     init(mem);
@@ -439,7 +439,7 @@ void obj_stat(memory* mem)
 static int query_header_offset(const memory* mem, const obj_header* o)
 {
     const obj_header* copy = NULL;
-    assert(o->valid, "Attempt to query offset of deleted header");
+    ASSERT(o->valid, "Attempt to query offset of deleted header");
 
     for(int i = OBJ_SECTION_START; i <= mem->obj_info_section; i += sizeof(obj_header))
     {
@@ -452,8 +452,8 @@ static int query_header_offset(const memory* mem, const obj_header* o)
 
 static void destroy_header(memory* mem, const obj_header* obj) {
     int offset = query_header_offset(mem, obj);
-    assert(obj->valid, "Header was destroyed before the function could reach it!");
-    assert(offset > 0, "Something went really bad");
+    ASSERT(obj->valid, "Header was destroyed before the function could reach it!");
+    ASSERT(offset > 0, "Something went really bad");
 
     int copysz = sizeof(obj_header);
 
@@ -468,7 +468,37 @@ static void destroy_header(memory* mem, const obj_header* obj) {
     mem->data_offset -= sizeof(obj_header);
 }
 
-//! BEWARE! Destroying objects does not automatically defragment the VHD
+void try_weld(memory* mem) {
+    // STRUCT_STACK(mem->fs_top * mem->fs_top, {int lower; int higher});
+    struct { int low; int high } welds[mem->fs_top];
+    int wp = 0;
+
+    for(int i = 0; i < mem->fs_top; ++i)
+    {
+        int i_end = mem->spaces[i].size + mem->spaces[i].start;
+
+        for(int j = 0; j < mem->fs_top; ++j)
+        {
+            if(i == j) continue;
+
+            int j_end = mem->spaces[j].size + mem->spaces[j].start;
+            // [1 2 {3 4] 5 6 7 8}
+            // 
+            if(i_end >= mem->spaces[j].start && mem->spaces[i].start <= mem->spaces[j].start)
+            {
+                welds[wp].high =    (i > j)? j : i;
+                welds[wp++].low =   (i > j)? i : j;
+                break;
+            }
+        }
+    }
+
+    for(int i = 0; i < STACK_SIZE(); ++i) {
+
+    }
+}
+
+// !BEWARE! Destroying objects does not automatically defragment the VHD
 //! This will eventually be a feature, for now just use it as a VWORM
 //!                 (Virtual Write-Once-Read-Many)
 void* destroy(memory* mem, int handle)
@@ -490,9 +520,11 @@ void* destroy(memory* mem, int handle)
     mem->spaces[mem->fs_top].start = obj.offset.i;
 
     destroy_header(mem, &obj);
-    // try_weld(mem);
-    
 
+#ifdef WELD_ON_DESTROY
+    try_weld(mem);
+#endif
+    
     return ret;
 }
 

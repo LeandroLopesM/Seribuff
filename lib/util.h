@@ -76,10 +76,16 @@
 #   define DBGF(fmt, ...)
 #endif
 
-#define WELD(...) ___VA_ARGS__
-
-#define assert(x, msg) \
+#define ASSERT(x, msg) \
     do { if(!(x)) { fprintf(stderr, "%s:%d assertion failed: '%s'\nPanic message:\t%s\n", __FILE__, __LINE__, #x, msg); exit(1); } } while(0)
+
+#if ASSERT_FATAL && ASSERT_BREAK
+#   define SOFT_ASSERT(expr, msg, nonfatal) do {raise(SIGTRAP); ASSERT(expr, msg)} while(0)
+#elif ASSERT_FATAL
+#   define SOFT_ASSERT(expr, msg, nonfatal) ASSERT(expr, msg)
+#else
+#   define SOFT_ASSERT(expr, msg, nonfatal) do {if(!(expr)) nonfatal;} while(0)
+#endif
 
 typedef unsigned char byte;
 
@@ -121,12 +127,16 @@ void hexdump(const void *data, size_t size) {
     }
 }
 
-#define CUSTOM_STACK(size, struct_body)\
+#define STRUCT_STACK(size, struct_body)\
 struct stack struct_body;\
 struct stack s[size];\
 int sp = 0;
 
-#define STACK_PUSH(a, ...) \
-    s[sp++] = (struct stack){__VA_ARGS__};
+#define STACK_PUSH(...) \
+    s[sp++] = (struct stack){__VA_ARGS__}
+
+#define STACK_VAR() \
+    s
+    
 
 #endif // UTIL_H
