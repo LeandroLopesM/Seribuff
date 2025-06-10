@@ -1,0 +1,56 @@
+Core concepts:
+    VHD -> The literal byte array to which information is written and read from.
+    Memory -> The structure which contains the VHD and other information.
+
+VHD Segments:
+    The VHD is made up of 3 sections: 
+     - 4 bytes              Used as an object counter.
+     - 1/4 of the size      Object header storage.
+     - The rest             Information storage.
+
+Types:
+    mempos_t                Unsigned integer which points inside the VHD, resized to point within MEM_SIZE
+    obj_header              Object header information structure
+    memory                  VHD and necessary information
+
+Macros:
+    VHD_SIZE            1024      Fixed VHD size, mutable.
+    MAX_FRAGMENTS       4         Maximum fragment count in the VHD, mutable. (If this is reached, the program will fail an assert!)
+    OBJ_SECTION_START   4         Defines the size of object counter.
+
+
+Object header structure:
+    int_byte    id         Unique ID for the object
+    int_byte    size       Object size within the VHD
+    bool        valid      Here to prevent access to headers invalidaded due to deletion
+    mempos_byte offset     Object offset within the VHD
+
+Memory information structure:
+    bool initialized                        Whether or not the structure was initialized.
+    byte vhd[VHD_SIZE]                      The VHD
+    mempos_t last_handle                    The handle used by the last written object, kept since handles are sequential
+    mempos_t data_offset                    The top of the information stack, gets increased every time the VHD is written to
+    mempos_t obj_info_section               Start of object header section(+4)
+    mempos_t object_counter_index           What byte is currently being written in the space allocated for the object counter
+    int fragment_count                      How many free space fragments in the vhd
+    free_space fragments[MAX_FRAGMENTS]     Start and size of each fragment, in the future to be used in defragmenting
+
+EXTRA (Information i want to keep here in case my dementia riddled mind forgets!)
+Mostly boring stuff about internal workings of the API;
+
+PUSH Mechanics:
+    TAKES[ memory struct ptr ; void ptr to data ; size of data ]:
+        ASSERT mem not null
+        
+        incase mem  not initialized, initiate it
+        
+        ASSERT current VHD size + data size wont overflow
+
+        try push_header for data, else return failure
+        
+        copy to vhd ; with lowest_available_offset ; data size bytes of source
+        increment data_offset
+    RETURNS[handle or -1]
+
+
+

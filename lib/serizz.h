@@ -63,22 +63,22 @@ typedef struct {
     mempos_t obj_info_section;      // obj header storage start
     mempos_t last_handle;           // latest obj handle
     mempos_t object_counter_index;  // obj counter index
-    free_space spaces[MAX_FRAGMENTS];
-    int fs_top;
+    free_space fragments[MAX_FRAGMENTS];
+    int free_space_count;
 } memory;
 
 typedef union {
-    memory m;
     char b[sizeof(memory)];
+    memory m;
 } memory_byte;
 
 typedef union {
-    // byte b[sizeof(int)];
+    byte b[sizeof(int)];
     int i;
 } int_byte;
 
 typedef union {
-    // byte b[sizeof(mempos_t)];
+    byte b[sizeof(mempos_t)];
     mempos_t i;
 } mempos_byte;
 
@@ -101,7 +101,7 @@ void    read(memory* mem, const char* path);                        // Reads pat
 void    write(const memory* mem, const char* path);                 // writes mem to disk, to be used in conjunction with read
 void    clear(memory* mem);                                         // Fully clears mem.vhd
 void*   destroy(memory* mem, int handle);                           // Deletes header and element in mem.vhd with handle
-void    fs_stat(memory* mem);                                       // Displays the current status of the free spaces in mem.vhd (fragments)
+void    fs_stat(memory* mem);                                       // Displays the current status of the free fragments in mem.vhd (fragments)
 void    obj_stat(memory* mem);                                      // Displays the current status of object headers 
 void    find_obj(memory* mem, obj_header* dest, int handle);        // Finds obj with handle in mem, copies it to dest
 
@@ -162,14 +162,14 @@ static void init(memory* mem)
     mem->object_counter_index   = 0;
     mem->last_handle            = 0;
 
-    mem->fs_top                 = 0;
+    mem->free_space_count                 = 0;
     
-    memset(mem->spaces, 0, MAX_FRAGMENTS * sizeof(free_space));
+    memset(mem->fragments, 0, MAX_FRAGMENTS * sizeof(free_space));
     memset(mem->vhd, 0, VHD_SIZE);
 
                                 //  *might* introduce a 1 byte gap between obj and data sections
-    mem->spaces[mem->fs_top].size = (size_t)floor(VHD_SIZE * (3./4.)),
-    mem->spaces[mem->fs_top].start = VHD_SIZE / 4;
+    mem->fragments[mem->free_space_count].size = (size_t)floor(VHD_SIZE * (3./4.)),
+    mem->fragments[mem->free_space_count].start = VHD_SIZE / 4;
     
     mem->initialized            = true;
 }
@@ -187,24 +187,24 @@ static void update_space(memory* mem, mempos_t change, size_t changesize)
 {
 // don't trust this code right now, but dont wanna forget to implement it as well
 #ifdef DISK_DEFRAG_IMPL
-    if(mem->fs_top > 1)
+    if(mem->free_space_count > 1)
     {
-        // find weldable spaces
-        int ptr = mem->fs_top;
+        // find weldable fragments
+        int ptr = mem->free_space_count;
 
         CUSTOM_STACK(MAX_FRAGMENTS, {int welder; int weldee;});
 
         while(ptr > 0)
         {
-            if( ptr + 1 < mem->fs_top ) {
+            if( ptr + 1 < mem->free_space_count ) {
                 // regular middle-member check
-                mempos_t end_before   = mem->spaces[ptr - 1].size + mem->spaces[ptr - 1].start;
-                mempos_t end_after    = mem->spaces[ptr + 1].size + mem->spaces[ptr + 1].start;
-                mempos_t end_current  = mem->spaces[ptr].size + mem->spaces[ptr].start;
+                mempos_t end_before   = mem->fragments[ptr - 1].size + mem->fragments[ptr - 1].start;
+                mempos_t end_after    = mem->fragments[ptr + 1].size + mem->fragments[ptr + 1].start;
+                mempos_t end_current  = mem->fragments[ptr].size + mem->fragments[ptr].start;
                 
-                free_space before   = mem->spaces[ptr - 1];
-                free_space after    = mem->spaces[ptr + 1];
-                free_space current  = mem->spaces[ptr];
+                free_space before   = mem->fragments[ptr - 1];
+                free_space after    = mem->fragments[ptr + 1];
+                free_space current  = mem->fragments[ptr];
                 
                 /***********************************THIS IS HERE SO I DONT FORGET**********************************************\
                 Checks both directions just to garantee we didn't miss anyone, for example in a case where                     |
@@ -229,9 +229,9 @@ static void update_space(memory* mem, mempos_t change, size_t changesize)
             ptr--;
         }
 
-        // Still gotta check at spaces[0];
+        // Still gotta check at fragments[0];
         
-        if(mem->spaces[0].start >= mem->spaces[1].start)
+        if(mem->fragments[0].start >= mem->fragments[1].start)
         {
             // welds .weldee into .welder
             STACK_PUSH(0, .welder = ptr - 1, .weldee = ptr);
@@ -239,37 +239,37 @@ static void update_space(memory* mem, mempos_t change, size_t changesize)
     }
 #endif // DISK_DEFRAG_IMPL
 
-    // for(int i = 0; i < mem->fs_top; ++i)
+    // for(int i = 0; i < mem->free_space_count; ++i)
     // {
-    //     DBG("Space[%d]\n\tSIZE:\t%d\n\tSTART:\t%d\n", i, mem->spaces[i].size, mem->spaces[i].start)
-    //     int curr_section_end = mem->spaces[i].start + mem->spaces[i].size;
-    //     free_space curr_section = mem->spaces[i];
+    //     DBG("Space[%d]\n\tSIZE:\t%d\n\tSTART:\t%d\n", i, mem->fragments[i].size, mem->fragments[i].start)
+    //     int curr_section_end = mem->fragments[i].start + mem->fragments[i].size;
+    //     free_space curr_section = mem->fragments[i];
     //     if(curr_section_end > change)
     //     {
-    //         mem[mem->fs_top++] = {.size = curr_section.size - }
+    //         mem[mem->free_space_count++] = {.size = curr_section.size - }
     //     }
     // }
-    ASSERT(change <= mem->fs_top, "Free space cache overflow inside the library");
+    ASSERT(change <= mem->free_space_count, "Free space cache overflow inside the library");
 
     // for now, just walk the section forward.
-    if(mem->spaces[change].size - changesize == 0) {
-        pop_at(mem->spaces, change, mem->fs_top);
-        mem->fs_top--;
+    if(mem->fragments[change].size - changesize == 0) {
+        pop_at(mem->fragments, change, mem->free_space_count);
+        mem->free_space_count--;
     };
-    mem->spaces[change].size -= changesize;
-    mem->spaces[change].start += changesize;
+    mem->fragments[change].size -= changesize;
+    mem->fragments[change].start += changesize;
 }
 
 static mempos_t lowest_available_offset(memory* mem, size_t required_size)
 {
-    int ptr = mem->fs_top;
+    int ptr = mem->free_space_count;
     mempos_t ret = -1;
 
     while(ptr >= 0)
     {
-        DBGF("\FPL[%d]\n\t\tSIZE:\t%llu\n\t\tSTART:\t%d\n", ptr, mem->spaces[ptr].size, mem->spaces[ptr].start);
-        if(mem->spaces[ptr].size >= required_size) {
-            ret = mem->spaces[ptr].start;
+        DBGF("\FPL[%d]\n\t\tSIZE:\t%llu\n\t\tSTART:\t%d\n", ptr, mem->fragments[ptr].size, mem->fragments[ptr].start);
+        if(mem->fragments[ptr].size >= required_size) {
+            ret = mem->fragments[ptr].start;
             goto success;
         };
         ptr--;
@@ -403,20 +403,20 @@ void clear(memory* mem)
 
 void fs_stat(memory* mem)
 {
-    int ptr = mem->fs_top;
+    int ptr = mem->free_space_count;
 
-    DBGF("FS_SIZE: %d\n", mem->fs_top + 1);
+    DBGF("FS_SIZE: %d\n", mem->free_space_count + 1);
     
     while(ptr >= 0)
     {
-        DBGF("FS[%d]:\n\tSize: %2lu\tStart: %2d\n", ptr, (unsigned long)mem->spaces[ptr].size, mem->spaces[ptr].start);
+        DBGF("FS[%d]:\n\tSize: %2lu\tStart: %2d\n", ptr, (unsigned long)mem->fragments[ptr].size, mem->fragments[ptr].start);
         ptr--;
     }
 }
 
 void obj_stat(memory* mem)
 {
-    // int ptr = mem->fs_top;
+    // int ptr = mem->free_space_count;
     int objc = query_obj_count(mem);
     if(objc == 0) {
         DBG("Header section empty!");
@@ -469,33 +469,42 @@ static void destroy_header(memory* mem, const obj_header* obj) {
 }
 
 void try_weld(memory* mem) {
-    // STRUCT_STACK(mem->fs_top * mem->fs_top, {int lower; int higher});
-    struct { int low; int high } welds[mem->fs_top];
-    int wp = 0;
+    ASSERT(0, "Unimplemented!");
+    /* ******************************************************************************************* *\
+       *       Current problem:                                                                  *
+       *           Stuck in a forever const-source loop                                          *
+       *               If a member in source meets criteria, remove from source                  *
+       *               But cant risk remove from source without screwing up the current loop     *
+       *       Solution?                                                                         *
+       *          A stack, another loop and checking entries for the same index;                 *
+    \* ******************************************************************************************* */
+    // // STRUCT_STACK(mem->free_space_count * mem->free_space_count, {int lower; int higher});
+    // struct { int low; int high } welds[mem->free_space_count];
+    // int wp = 0;
 
-    for(int i = 0; i < mem->fs_top; ++i)
-    {
-        int i_end = mem->spaces[i].size + mem->spaces[i].start;
+    // for(int i = 0; i < mem->free_space_count; ++i)
+    // {
+    //     int i_end = mem->fragments[i].size + mem->fragments[i].start;
 
-        for(int j = 0; j < mem->fs_top; ++j)
-        {
-            if(i == j) continue;
+    //     for(int j = 0; j < mem->free_space_count; ++j)
+    //     {
+    //         if(i == j) continue;
 
-            int j_end = mem->spaces[j].size + mem->spaces[j].start;
-            // [1 2 {3 4] 5 6 7 8}
-            // 
-            if(i_end >= mem->spaces[j].start && mem->spaces[i].start <= mem->spaces[j].start)
-            {
-                welds[wp].high =    (i > j)? j : i;
-                welds[wp++].low =   (i > j)? i : j;
-                break;
-            }
-        }
-    }
+    //         int j_end = mem->fragments[j].size + mem->fragments[j].start;
+    //         // [1 2 {3 4] 5 6 7 8}
+    //         // 
+    //         if(i_end >= mem->fragments[j].start && mem->fragments[i].start <= mem->fragments[j].start)
+    //         {
+    //             welds[wp].high =    (i > j)? j : i;
+    //             welds[wp++].low =   (i > j)? i : j;
+    //             break;
+    //         }
+    //     }
+    // }
 
-    for(int i = 0; i < STACK_SIZE(); ++i) {
+    // for(int i = 0; i < STACK_SIZE(); ++i) {
 
-    }
+    // }
 }
 
 // !BEWARE! Destroying objects does not automatically defragment the VHD
@@ -511,13 +520,13 @@ void* destroy(memory* mem, int handle)
 
     /*
         Might cause the vhd to fragment itself, but,
-        The logic here would be that we push new open spaces through the top of the list
+        The logic here would be that we push new open fragments through the top of the list
         And since find_lowest_offset_available starts from the top, it should find the most recent fragments
         Consequence of this is that the resizing will likely be with an item of a different size
         Which instead of taking up the space, will just break it into a smaller piece 
     */
-    mem->spaces[++mem->fs_top].size = obj.size.i;
-    mem->spaces[mem->fs_top].start = obj.offset.i;
+    mem->fragments[++mem->free_space_count].size = obj.size.i;
+    mem->fragments[mem->free_space_count].start = obj.offset.i;
 
     destroy_header(mem, &obj);
 
