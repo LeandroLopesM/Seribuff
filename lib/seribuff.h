@@ -10,8 +10,8 @@
 */
 
 
-#ifndef SERIZZ_H
-#define SERIZZ_H
+#ifndef SERIBUFF_H
+#define SERIBUFF_H
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -228,4 +228,4 @@ void clear(memory* mem)
     init(mem);
 }
 
-#endif // SERIZZ_H
+#endif // SERIBUFF_H
