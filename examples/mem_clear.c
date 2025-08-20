@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 #include "../lib/util.h"
-#include "../lib/serizz.h"
+#include "../lib/seribuff.h"
 
 MEMORY(c)
 
